@@ -1,0 +1,134 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id        String   @id @default(cuid())
+  name      String
+  role      String   // OWNER, MANAGEMENT, LABOUR
+  password  String   // Encrypted PIN or Password
+  dailyWage Float?   // Daily wage rate in RS
+  createdAt DateTime @default(now())
+
+
+  // Relations
+  attendance      Attendance[]
+  assignedTasks   Task[]        @relation("AssignedTo")
+  createdTasks    Task[]        @relation("CreatedBy")
+  leaveRequests   LeaveRequest[]
+  fuelIssuedBy    FuelLog[]     @relation("FuelIssuedBy")
+  fuelIssuedTo    FuelLog[]     @relation("FuelIssuedTo")
+  maintenanceLogs MaintenanceLog[]
+  inventoryTx     InventoryTx[]
+}
+
+model Attendance {
+  id           String   @id @default(cuid())
+  userId       String
+  user         User     @relation(fields: [userId], references: [id])
+  date         DateTime // Date only (at midnight)
+  status       String   // PRESENT, ABSENT, LEAVE
+  checkInTime  DateTime?
+  checkOutTime DateTime?
+  latitude     Float?
+  longitude    Float?
+  remarks      String?
+  createdAt    DateTime @default(now())
+
+  @@unique([userId, date])
+}
+
+model LeaveRequest {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id])
+  type      String   // SICK, CASUAL
+  startDate DateTime
+  endDate   DateTime
+  reason    String?
+  status    String   // PENDING, APPROVED, REJECTED
+  createdAt DateTime @default(now())
+}
+
+model Task {
+  id             String    @id @default(cuid())
+  title          String
+  description    String?
+  assignedToUserId String?
+  assignedTo     User?     @relation("AssignedTo", fields: [assignedToUserId], references: [id])
+  createdByUserId String
+  createdBy      User      @relation("CreatedBy", fields: [createdByUserId], references: [id])
+  status         String    // PENDING, COMPLETED
+  createdAt      DateTime  @default(now())
+  completedAt    DateTime?
+}
+
+model Machine {
+  id        String   @id @default(cuid())
+  name      String
+  type      String   // TRACTOR, PIVOT, GENERATOR, BALER, LOADER
+  status    String   // ACTIVE, MAINTENANCE, RETIRED
+  createdAt DateTime @default(now())
+
+  // Relations
+  fuelLogs        FuelLog[]
+  maintenanceLogs MaintenanceLog[]
+}
+
+model FuelLog {
+  id             String   @id @default(cuid())
+  machineId      String
+  machine        Machine  @relation(fields: [machineId], references: [id])
+  liters         Float
+  purpose        String?
+  issuedByUserId String
+  issuedBy       User     @relation("FuelIssuedBy", fields: [issuedByUserId], references: [id])
+  issuedToUserId String?
+  issuedTo       User?     @relation("FuelIssuedTo", fields: [issuedToUserId], references: [id])
+  createdAt      DateTime @default(now())
+}
+
+model InventoryItem {
+  id          String   @id @default(cuid())
+  name        String
+  category    String   // SEED, FERTILIZER, CHEMICAL, SPARE_PART, OTHER
+  quantity    Float    @default(0)
+  unit        String   // KG, LITRE, PIECE, BAG
+  minLevel    Float    @default(0)
+  createdAt   DateTime @default(now())
+
+  // Relations
+  transactions InventoryTx[]
+}
+
+model InventoryTx {
+  id        String   @id @default(cuid())
+  itemId    String
+  item      InventoryItem @relation(fields: [itemId], references: [id])
+  type      String   // IN, OUT
+  quantity  Float
+  relatedTo String?  // Optional description of what this was for (Pivot 1, Task ID)
+  userId    String
+  user      User     @relation(fields: [userId], references: [id])
+  createdAt DateTime @default(now())
+}
+
+model MaintenanceLog {
+  id             String   @id @default(cuid())
+  machineId      String
+  machine        Machine  @relation(fields: [machineId], references: [id])
+  issue          String
+  actionTaken    String?
+  cost           Float?
+  reportedByUserId String
+  reportedBy     User     @relation(fields: [reportedByUserId], references: [id])
+  createdAt      DateTime @default(now())
+}

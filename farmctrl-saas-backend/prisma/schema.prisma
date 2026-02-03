@@ -1,0 +1,359 @@
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// --- ENUMS ---
+
+enum Role {
+  SUPER_ADMIN
+  OWNER
+  GM_OPERATIONS
+  FARM_MANAGER
+  BOOKKEEPER
+  SUPERVISOR
+  LABOUR
+}
+
+enum EmploymentStatus {
+  ACTIVE
+  INACTIVE
+  TERMINATED
+}
+
+enum EmploymentType {
+  DAILY_WAGE
+  MONTHLY
+}
+
+enum MachineryStatus {
+  ACTIVE
+  MAINTENANCE
+  OUT_OF_SERVICE
+}
+
+enum TaskStatus {
+  PENDING
+  IN_PROGRESS
+  COMPLETED
+}
+
+enum MaintenanceStatus {
+  OPEN
+  RESOLVED
+}
+
+// --- CORE MODELS ---
+
+model Farm {
+  id          String   @id @default(cuid())
+  name        String
+  location    String?
+  totalAcres  Float?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Multi-tenant relations
+  users       User[]
+  pivots      Pivot[]
+  machinery   Machinery[]
+  attendance  Attendance[]
+  tasks       Task[]
+  inventory   InventoryItem[]
+  fuelLogs    FuelLog[]
+  maintenance MaintenanceLog[]
+  tickets     Ticket[]
+  harvests    HarvestRecord[]
+}
+
+model User {
+  id          String   @id @default(cuid())
+  username    String   @unique
+  name        String
+  password    String
+  role        Role
+  farmId      String?  // Null for Super Admins
+  farm        Farm?    @relation(fields: [farmId], references: [id])
+  
+  refreshToken String?
+  
+  // Relations
+  staffProfile    StaffProfile?
+  
+  // Audit fields
+  createdRecords  AuditLog[] @relation("CreatedBy")
+  
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+model StaffProfile {
+  id              String           @id @default(cuid())
+  userId          String           @unique
+  user            User             @relation(fields: [userId], references: [id])
+  
+  contactNumber   String?
+  cnic            String?          // Masked in API
+  jobTitle        String
+  department      String           // irrigation, machinery, store, admin
+  employmentType  EmploymentType
+  status          EmploymentStatus @default(ACTIVE)
+  dateOfJoining   DateTime
+  dailyWage       Float?
+  monthlySalary   Float?
+  
+  // Assigned Machinery
+  machineryAssignments MachineryAssignment[]
+  
+  // Operational Records
+  attendance      Attendance[]
+  leaveRequests   LeaveRequest[]
+  assignedTasks   Task[]           @relation("AssignedTo")
+  fuelIssuedTo    FuelLog[]        @relation("FuelIssuedTo")
+  ticketsRaised   Ticket[]         @relation("RaisedBy")
+}
+
+model Pivot {
+  id          String   @id @default(cuid())
+  farmId      String
+  farm        Farm     @relation(fields: [farmId], references: [id])
+  
+  code        String   // e.g. PIVOT-01
+  cropType    String   // Rhodes Grass, etc.
+  status      String   @default("ACTIVE")
+  
+  tasks       Task[]
+  maintenance MaintenanceLog[]
+  harvests    HarvestRecord[]
+  
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+model Machinery {
+  id          String          @id @default(cuid())
+  farmId      String
+  farm        Farm            @relation(fields: [farmId], references: [id])
+  
+  type        String          // Tractor, Sprayer, Harvester, etc.
+  model       String
+  plateNumber String?
+  status      MachineryStatus @default(ACTIVE)
+  
+  assignments MachineryAssignment[]
+  tasks       Task[]
+  usageLogs   UsageLog[]
+  fuelLogs    FuelLog[]
+  maintenance MaintenanceLog[]
+  
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+model MachineryAssignment {
+  id              String       @id @default(cuid())
+  machineryId     String
+  machinery       Machinery    @relation(fields: [machineryId], references: [id])
+  staffProfileId  String
+  staffProfile    StaffProfile @relation(fields: [staffProfileId], references: [id])
+  
+  isPrimary       Boolean      @default(true)
+  startTime       DateTime     @default(now())
+  endTime         DateTime?
+  
+  notes           String?
+}
+
+// --- OPERATIONAL MODELS ---
+
+model Attendance {
+  id              String       @id @default(cuid())
+  farmId          String
+  farm            Farm         @relation(fields: [farmId], references: [id])
+  staffProfileId  String
+  staffProfile    StaffProfile @relation(fields: [staffProfileId], references: [id])
+  
+  date            DateTime     @map("attendance_date")
+  isPresent       Boolean      @default(true)
+  lat             Float?
+  lng             Float?
+  
+  markedBy        String       // User ID
+  createdAt       DateTime     @default(now())
+}
+
+model LeaveRequest {
+  id              String       @id @default(cuid())
+  staffProfileId  String
+  staffProfile    StaffProfile @relation(fields: [staffProfileId], references: [id])
+  
+  startDate       DateTime
+  endDate         DateTime
+  reason          String
+  status          String       @default("PENDING") // PENDING, APPROVED, REJECTED
+  
+  approvedBy      String?      // User ID
+  createdAt       DateTime     @default(now())
+}
+
+model Task {
+  id              String       @id @default(cuid())
+  farmId          String
+  farm            Farm         @relation(fields: [farmId], references: [id])
+  
+  title           String
+  description     String?
+  status          TaskStatus   @default(PENDING)
+  
+  // Assignments
+  assignedToId    String
+  assignedTo      StaffProfile @relation("AssignedTo", fields: [assignedToId], references: [id])
+  
+  // Links
+  pivotId         String?
+  pivot           Pivot?       @relation(fields: [pivotId], references: [id])
+  machineryId     String?
+  machinery       Machinery?   @relation(fields: [machineryId], references: [id])
+  
+  progress        Int          @default(0) // 0-100
+  createdBy       String
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
+}
+
+model UsageLog {
+  id              String       @id @default(cuid())
+  machineryId     String
+  machinery       Machinery    @relation(fields: [machineryId], references: [id])
+  
+  userId          String
+  taskId          String?
+  hoursLogged     Float
+  purpose         String
+  
+  startTime       DateTime
+  endTime         DateTime
+  
+  createdAt       DateTime     @default(now())
+}
+
+model FuelLog {
+  id              String       @id @default(cuid())
+  farmId          String
+  farm            Farm         @relation(fields: [farmId], references: [id])
+  
+  machineryId     String
+  machinery       Machinery    @relation(fields: [machineryId], references: [id])
+  
+  issuedToId      String
+  issuedTo        StaffProfile @relation("FuelIssuedTo", fields: [issuedToId], references: [id])
+  
+  litres          Float
+  purpose         String
+  
+  issuedBy        String       // User ID
+  createdAt       DateTime     @default(now())
+}
+
+model MaintenanceLog {
+  id              String            @id @default(cuid())
+  farmId          String
+  farm            Farm              @relation(fields: [farmId], references: [id])
+  
+  machineryId     String?
+  machinery       Machinery?        @relation(fields: [machineryId], references: [id])
+  pivotId         String?
+  pivot           Pivot?            @relation(fields: [pivotId], references: [id])
+  
+  description     String
+  actionTaken     String?
+  cost            Float?
+  technician      String?
+  status          MaintenanceStatus @default(OPEN)
+  
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+}
+
+model InventoryItem {
+  id              String       @id @default(cuid())
+  farmId          String
+  farm            Farm         @relation(fields: [farmId], references: [id])
+  
+  name            String       // Fertilizer, Seed, Bales, etc.
+  category        String       // SPARE_PARTS, CONSUMABLES, KITCHEN
+  quantity        Float        @default(0)
+  unit            String       // Kg, Bags, Litres, Pieces
+  minStockLevel   Float        @default(10)
+  
+  transactions    InventoryTx[]
+  
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
+}
+
+model InventoryTx {
+  id              String       @id @default(cuid())
+  itemId          String
+  item            InventoryItem @relation(fields: [itemId], references: [id])
+  
+  type            String       // STOCK_IN, STOCK_OUT
+  quantity        Float
+  issuedTo        String?      // Staff ID
+  pivotId         String?
+  
+  createdBy       String       // User ID
+  createdAt       DateTime     @default(now())
+}
+
+model Ticket {
+  id              String       @id @default(cuid())
+  farmId          String
+  farm            Farm         @relation(fields: [farmId], references: [id])
+  
+  title           String
+  description     String
+  priority        String       @default("NORMAL") // LOW, NORMAL, HIGH, CRITICAL
+  status          String       @default("OPEN")   // OPEN, IN_PROGRESS, RESOLVED
+  
+  raisedById      String
+  raisedBy        StaffProfile @relation("RaisedBy", fields: [raisedById], references: [id])
+  
+  resolutionNotes String?
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
+}
+
+model HarvestRecord {
+  id              String       @id @default(cuid())
+  farmId          String
+  farm            Farm         @relation(fields: [farmId], references: [id])
+  
+  pivotId         String
+  pivot           Pivot        @relation(fields: [pivotId], references: [id])
+  
+  harvestDate     DateTime
+  outputQuantity  Float        // Number of bales or weight
+  outputUnit      String       @default("BALES")
+  
+  createdAt       DateTime     @default(now())
+}
+
+model AuditLog {
+  id          String   @id @default(cuid())
+  userId      String
+  user        User     @relation("CreatedBy", fields: [userId], references: [id])
+  
+  action      String   // CREATE, UPDATE, DELETE
+  entity      String   // Model Name
+  entityId    String
+  oldValue    Json?
+  newValue    Json?
+  
+  createdAt   DateTime @default(now())
+}
